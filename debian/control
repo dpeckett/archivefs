@@ -1,0 +1,27 @@
+Source: golang-github-dpeckett-archivefs
+Section: golang
+Priority: optional
+Maintainer: Damian Peckett <damian@pecke.tt>
+Uploaders: Damian Peckett <damian@pecke.tt>
+Rules-Requires-Root: no
+Build-Depends: debhelper-compat (= 13),
+               dh-sequence-golang,
+               golang-any,
+               golang-github-google-btree-dev,
+               golang-github-stretchr-testify-dev
+Testsuite: autopkgtest-pkg-go
+Standards-Version: 4.6.2
+Vcs-Browser: https://github.com/dpeckett/archivefs
+Vcs-Git: https://github.com/dpeckett/archivefs.git
+Homepage: https://github.com/dpeckett/archivefs
+XS-Go-Import-Path: github.com/dpeckett/archivefs
+
+Package: golang-github-dpeckett-archivefs-dev
+Architecture: all
+Multi-Arch: foreign
+Depends: golang-github-google-btree-dev,
+         golang-github-stretchr-testify-dev,
+         ${misc:Depends}
+Description: 
+ Implementations of Go's fs.FS (https://pkg.go.dev/io/fs#FS) interface
+ for various archive types.

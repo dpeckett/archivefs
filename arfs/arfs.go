@@ -52,7 +52,7 @@ var (
 
 // FS is a filesystem that represents a Debian .deb flavored `ar(1)` archive.
 type FS struct {
-	tree *btree.BTreeG[Entry]
+	tree *btree.BTree
 }
 
 // Open a new `ar(1)` archive from the given `io.ReaderAt`.
@@ -63,9 +63,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 		return nil, err
 	}
 
-	tree := btree.NewG[Entry](2, func(a, b Entry) bool {
-		return strings.Compare(a.Filename, b.Filename) < 0
-	})
+	tree := btree.New(2)
 
 	// Read the entries from the archive.
 	for {
@@ -95,7 +93,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 		e.data = io.NewSectionReader(ra, offset+int64(n), e.FileSize)
 		offset += int64(n) + e.FileSize + (e.FileSize % 2)
 
-		tree.ReplaceOrInsert(*e)
+		tree.ReplaceOrInsert(e)
 	}
 
 	return &FS{tree: tree}, nil
@@ -103,9 +101,9 @@ func Open(ra io.ReaderAt) (*FS, error) {
 
 // Open a file from the archive.
 func (fsys *FS) Open(name string) (fs.File, error) {
-	e, ok := fsys.tree.Get(Entry{Filename: name})
-	if ok {
-		return &file{Entry: e, fsys: fsys}, nil
+	e := fsys.tree.Get(&Entry{Filename: name})
+	if e != nil {
+		return &file{Entry: *e.(*Entry), fsys: fsys}, nil
 	}
 
 	return nil, fs.ErrNotExist
@@ -118,9 +116,14 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	}
 
 	var dirEntries []fs.DirEntry
-	fsys.tree.Ascend(func(e Entry) bool {
-		dirEntries = append(dirEntries, &dirEntry{Entry: e, fsys: fsys})
-		return true
+	fsys.tree.Ascend(func(item btree.Item) bool {
+		e := item.(*Entry)
+		if strings.HasPrefix(e.Filename, name) {
+			dirEntries = append(dirEntries, &dirEntry{Entry: *e, fsys: fsys})
+			return true
+		}
+
+		return false
 	})
 
 	return dirEntries, nil
@@ -128,12 +131,12 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 // Stat a file in the archive.
 func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
-	e, ok := fsys.tree.Get(Entry{Filename: name})
-	if !ok {
-		return nil, fs.ErrNotExist
+	e := fsys.tree.Get(&Entry{Filename: name})
+	if e != nil {
+		return &dirEntry{Entry: *e.(*Entry), fsys: fsys}, nil
 	}
 
-	return &e, nil
+	return nil, fs.ErrNotExist
 }
 
 // Take the AR format line, and create an ArEntry (without .Data set)
@@ -244,6 +247,11 @@ func (e *Entry) IsDir() bool {
 
 func (e *Entry) Sys() any {
 	return e
+}
+
+func (e *Entry) Less(than btree.Item) bool {
+	return strings.Compare(e.Filename, than.(*Entry).Filename) < 0
+
 }
 
 type dirEntry struct {

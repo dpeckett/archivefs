@@ -3,7 +3,7 @@ module github.com/dpeckett/archivefs
 go 1.22.0
 
 require (
-	github.com/google/btree v1.1.2
+	github.com/google/btree v1.0.0
 	github.com/stretchr/testify v1.9.0
 )
 
