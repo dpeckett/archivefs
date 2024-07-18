@@ -1,5 +1,5 @@
 VERSION 0.8
-FROM golang:1.22-bookworm
+FROM golang:1.21-bookworm
 WORKDIR /workspace
 
 all:
@@ -10,11 +10,12 @@ all:
 
 tidy:
   LOCALLY
+  ENV GOTOOLCHAIN=go1.21.8 
   RUN go mod tidy
   RUN go fmt ./...
 
 lint:
-  FROM golangci/golangci-lint:v1.57.2
+  FROM golangci/golangci-lint:v1.59.1
   WORKDIR /workspace
   COPY . .
   RUN golangci-lint run --timeout 5m ./...

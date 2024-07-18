@@ -1,6 +1,6 @@
 module github.com/dpeckett/archivefs
 
-go 1.22.0
+go 1.21
 
 require (
 	github.com/google/btree v1.0.0
