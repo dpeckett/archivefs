@@ -1,5 +1,5 @@
 VERSION 0.8
-FROM golang:1.21-bookworm
+FROM golang:1.22-bookworm
 WORKDIR /workspace
 
 all:
@@ -10,7 +10,7 @@ all:
 
 tidy:
   LOCALLY
-  ENV GOTOOLCHAIN=go1.21.8 
+  ENV GOTOOLCHAIN=go1.22.1
   RUN go mod tidy
   RUN go fmt ./...
 
@@ -33,7 +33,8 @@ package:
   RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list
   RUN apt update
   # Tooling
-  RUN apt install -y devscripts dpkg-dev debhelper-compat dh-sequence-golang golang-any golang-1.21 git
+  RUN apt install -y git devscripts dpkg-dev debhelper-compat dh-sequence-golang \
+    golang-any=2:1.22~3~bpo12+1 golang-go=2:1.22~3~bpo12+1 golang-src=2:1.22~3~bpo12+1
   # Build Dependencies
   RUN apt install -y golang-github-google-btree-dev golang-github-stretchr-testify-dev
   RUN mkdir -p /workspace/golang-github-dpeckett-archivefs
