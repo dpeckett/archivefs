@@ -176,7 +176,7 @@ func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
 		}
 	}
 
-	return fsys.statEntry(e.(*entry), name)
+	return fsys.statEntry(e.(*entry))
 }
 
 func (fsys *FS) ReadLink(name string) (string, error) {
@@ -194,10 +194,10 @@ func (fsys *FS) StatLink(name string) (fs.FileInfo, error) {
 		return nil, fs.ErrNotExist
 	}
 
-	return fsys.statEntry(e.(*entry), name)
+	return fsys.statEntry(e.(*entry))
 }
 
-func (fsys *FS) statEntry(e *entry, name string) (fs.FileInfo, error) {
+func (fsys *FS) statEntry(e *entry) (fs.FileInfo, error) {
 	return e.FileInfo(), nil
 }
 

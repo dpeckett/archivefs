@@ -54,4 +54,13 @@ func TestArFS(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "I love lamp.\n", string(content))
+
+	// List the files in the archive.
+	dir, err := fsys.ReadDir(".")
+	require.NoError(t, err)
+
+	require.Len(t, dir, 2)
+
+	require.Equal(t, "hello.txt", dir[0].Name())
+	require.Equal(t, "lamp.txt", dir[1].Name())
 }

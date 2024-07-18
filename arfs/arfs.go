@@ -111,19 +111,29 @@ func (fsys *FS) Open(name string) (fs.File, error) {
 
 // ReadDir reads the contents of the archive.
 func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	if name != "." {
-		return nil, fs.ErrInvalid
+	dir := sanitizePath(name)
+	if dir == "." {
+		dir = ""
+	} else {
+		dir += "/"
 	}
 
 	var dirEntries []fs.DirEntry
 	fsys.tree.Ascend(func(item btree.Item) bool {
 		e := item.(*Entry)
-		if strings.HasPrefix(e.Filename, name) {
-			dirEntries = append(dirEntries, &dirEntry{Entry: *e, fsys: fsys})
-			return true
+
+		if !strings.HasPrefix(e.Filename, dir) {
+			return false
 		}
 
-		return false
+		relPath := strings.TrimPrefix(e.Filename, dir)
+		if relPath == "" || relPath == "." || strings.Contains(relPath, "/") {
+			return true
+		}
+		e.Filename = relPath
+
+		dirEntries = append(dirEntries, &dirEntry{Entry: *e, fsys: fsys})
+		return true
 	})
 
 	return dirEntries, nil
