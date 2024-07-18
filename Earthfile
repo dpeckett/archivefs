@@ -29,9 +29,11 @@ test:
 
 package:
   FROM debian:bookworm
+  # Use bookworm-backports for newer golang versions
+  RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list
   RUN apt update
   # Tooling
-  RUN apt install -y devscripts dpkg-dev debhelper-compat dh-sequence-golang golang-any golang git
+  RUN apt install -y devscripts dpkg-dev debhelper-compat dh-sequence-golang golang-any golang-1.21 git
   # Build Dependencies
   RUN apt install -y golang-github-google-btree-dev golang-github-stretchr-testify-dev
   RUN mkdir -p /workspace/golang-github-dpeckett-archivefs
