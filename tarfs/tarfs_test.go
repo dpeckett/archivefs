@@ -52,6 +52,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dpeckett/archivefs/copyfs"
 	"github.com/dpeckett/archivefs/tarfs"
 	"github.com/stretchr/testify/require"
 )
@@ -440,4 +441,49 @@ func TestTarFS(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTarFSCopy(t *testing.T) {
+	f, err := os.Open("testdata/image_linux_amd64.tar")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, f.Close())
+	})
+
+	fsys, err := tarfs.Open(f)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	err = copyfs.CopyFS(dir, fsys)
+	require.NoError(t, err)
+
+	// Get all the files from the output directory.
+	var files []string
+	err = filepath.WalkDir(dir, func(path string, info os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			files = append(files, relPath)
+		}
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	expectedFiles := []string{
+		"blobs/sha256/50aa4698fa6262977cff89181b2664b99d8a56dbca847bf62f2ef04854597cf8",
+		"blobs/sha256/65ad0d468eb1c558bf7f4e64e790f586e9eda649ee9f130cd0e835b292bbc5ac",
+		"blobs/sha256/ec562eabd705d25bfea8c8d79e4610775e375524af00552fe871d3338261563c",
+		"index.json",
+		"oci-layout",
+	}
+
+	require.ElementsMatch(t, expectedFiles, files)
 }

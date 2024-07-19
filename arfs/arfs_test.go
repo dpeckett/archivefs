@@ -13,9 +13,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/dpeckett/archivefs/arfs"
+	"github.com/dpeckett/archivefs/copyfs"
 
 	"github.com/stretchr/testify/require"
 )
@@ -33,8 +35,8 @@ func TestArFS(t *testing.T) {
 
 	require.Equal(t, "hello.txt", fi.Name())
 	require.Equal(t, int64(1361157466), fi.ModTime().Unix())
-	require.Equal(t, int64(501), fi.Sys().(*arfs.Entry).Uid)
-	require.Equal(t, int64(20), fi.Sys().(*arfs.Entry).Gid)
+	require.Equal(t, int64(501), fi.Sys().(arfs.Entry).Uid)
+	require.Equal(t, int64(20), fi.Sys().(arfs.Entry).Gid)
 	require.Equal(t, fs.FileMode(33188), fi.Mode())
 
 	// Now, test that we can read the contents of the file.
@@ -63,4 +65,46 @@ func TestArFS(t *testing.T) {
 
 	require.Equal(t, "hello.txt", dir[0].Name())
 	require.Equal(t, "lamp.txt", dir[1].Name())
+}
+
+func TestArFSCopy(t *testing.T) {
+	f, err := os.Open("testdata/multi_archive.a")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, f.Close())
+	})
+
+	fsys, err := arfs.Open(f)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	err = copyfs.CopyFS(dir, fsys)
+	require.NoError(t, err)
+
+	// Get all the files from the output directory.
+	var files []string
+	err = filepath.WalkDir(dir, func(path string, info os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			files = append(files, relPath)
+		}
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	expectedFiles := []string{
+		"hello.txt",
+		"lamp.txt",
+	}
+
+	require.ElementsMatch(t, expectedFiles, files)
 }

@@ -40,7 +40,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 	tree := btree.New(2)
 
 	// Add a default root directory entry.
-	tree.ReplaceOrInsert(&entry{
+	tree.ReplaceOrInsert(entry{
 		Header: tar.Header{
 			Typeflag: tar.TypeDir,
 			Name:     ".",
@@ -88,7 +88,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 
 		// Create a default directory entry for each parent directory.
 		for dir := filepath.Dir(h.Name); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
-			e := &entry{
+			e := entry{
 				Header: tar.Header{
 					Typeflag: tar.TypeDir,
 					Name:     dir,
@@ -103,7 +103,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 			}
 		}
 
-		tree.ReplaceOrInsert(&entry{
+		tree.ReplaceOrInsert(entry{
 			Header: *h,
 			data:   io.NewSectionReader(ra, begin, r.offset-begin),
 		})
@@ -113,14 +113,14 @@ func Open(ra io.ReaderAt) (*FS, error) {
 }
 
 func (fsys *FS) Open(name string) (fs.File, error) {
-	e := fsys.tree.Get(&entry{Header: tar.Header{Name: sanitizePath(name)}})
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: sanitizePath(name)}})
 	if e != nil {
-		tr := tar.NewReader(e.(*entry).data)
+		tr := tar.NewReader(e.(entry).data)
 		if _, err := tr.Next(); err != nil {
 			return nil, fmt.Errorf("failed to read file %s: %w", name, err)
 		}
 
-		return &file{entry: e.(*entry), fsys: fsys, r: tr}, nil
+		return &file{entry: e.(entry), fsys: fsys, r: tr}, nil
 	}
 
 	return nil, fs.ErrNotExist
@@ -135,8 +135,8 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	}
 
 	var dirEntries []fs.DirEntry
-	fsys.tree.AscendGreaterOrEqual(&entry{Header: tar.Header{Name: dir}}, func(item btree.Item) bool {
-		e := item.(*entry)
+	fsys.tree.AscendGreaterOrEqual(entry{Header: tar.Header{Name: dir}}, func(item btree.Item) bool {
+		e := item.(entry)
 
 		if !strings.HasPrefix(e.Name, dir) {
 			return false
@@ -158,30 +158,40 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
 	name = sanitizePath(name)
 
-	e := fsys.tree.Get(&entry{Header: tar.Header{Name: name}})
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: name}})
 	if e == nil {
+		if name == "." {
+			return fsys.statEntry(fsys.tree.Get(entry{
+				Header: tar.Header{
+					Typeflag: tar.TypeDir,
+					Name:     ".",
+					Mode:     0o777,
+				},
+			}).(entry))
+		}
+
 		return nil, fs.ErrNotExist
 	}
 
 	// If the file is a symlink, return the link target.
-	if e.(*entry).Typeflag == tar.TypeSymlink {
-		linkname := e.(*entry).Linkname
+	if e.(entry).Typeflag == tar.TypeSymlink {
+		linkname := e.(entry).Linkname
 		if !filepath.IsAbs(linkname) {
-			linkname = filepath.Clean(filepath.Join(filepath.Dir(name), e.(*entry).Linkname))
+			linkname = filepath.Clean(filepath.Join(filepath.Dir(name), e.(entry).Linkname))
 		}
 
-		e = fsys.tree.Get(&entry{Header: tar.Header{Name: linkname}})
+		e = fsys.tree.Get(entry{Header: tar.Header{Name: linkname}})
 		if e == nil {
 			return nil, fs.ErrNotExist
 		}
 	}
 
-	return fsys.statEntry(e.(*entry))
+	return fsys.statEntry(e.(entry))
 }
 
 func (fsys *FS) ReadLink(name string) (string, error) {
-	e := fsys.tree.Get(&entry{Header: tar.Header{Name: sanitizePath(name)}})
-	if e := e.(*entry); e.Typeflag != tar.TypeSymlink {
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: sanitizePath(name)}})
+	if e := e.(entry); e.Typeflag != tar.TypeSymlink {
 		return e.Linkname, nil
 	}
 
@@ -189,15 +199,15 @@ func (fsys *FS) ReadLink(name string) (string, error) {
 }
 
 func (fsys *FS) StatLink(name string) (fs.FileInfo, error) {
-	e := fsys.tree.Get(&entry{Header: tar.Header{Name: sanitizePath(name)}})
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: sanitizePath(name)}})
 	if e == nil {
 		return nil, fs.ErrNotExist
 	}
 
-	return fsys.statEntry(e.(*entry))
+	return fsys.statEntry(e.(entry))
 }
 
-func (fsys *FS) statEntry(e *entry) (fs.FileInfo, error) {
+func (fsys *FS) statEntry(e entry) (fs.FileInfo, error) {
 	return e.FileInfo(), nil
 }
 
@@ -206,7 +216,7 @@ func sanitizePath(name string) string {
 }
 
 type file struct {
-	*entry
+	entry
 	fsys *FS
 	r    io.Reader
 }
@@ -228,12 +238,12 @@ type entry struct {
 	data io.Reader
 }
 
-func (e *entry) Less(than btree.Item) bool {
-	return strings.Compare(e.Name, than.(*entry).Name) < 0
+func (e entry) Less(than btree.Item) bool {
+	return strings.Compare(e.Name, than.(entry).Name) < 0
 }
 
 type dirEntry struct {
-	*entry
+	entry
 	fsys *FS
 }
 

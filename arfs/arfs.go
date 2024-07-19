@@ -93,7 +93,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 		e.data = io.NewSectionReader(ra, offset+int64(n), e.FileSize)
 		offset += int64(n) + e.FileSize + (e.FileSize % 2)
 
-		tree.ReplaceOrInsert(e)
+		tree.ReplaceOrInsert(*e)
 	}
 
 	return &FS{tree: tree}, nil
@@ -101,9 +101,9 @@ func Open(ra io.ReaderAt) (*FS, error) {
 
 // Open a file from the archive.
 func (fsys *FS) Open(name string) (fs.File, error) {
-	e := fsys.tree.Get(&Entry{Filename: name})
+	e := fsys.tree.Get(Entry{Filename: name})
 	if e != nil {
-		return &file{Entry: *e.(*Entry), fsys: fsys}, nil
+		return &file{Entry: e.(Entry), fsys: fsys}, nil
 	}
 
 	return nil, fs.ErrNotExist
@@ -120,7 +120,7 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 	var dirEntries []fs.DirEntry
 	fsys.tree.Ascend(func(item btree.Item) bool {
-		e := item.(*Entry)
+		e := item.(Entry)
 
 		if !strings.HasPrefix(e.Filename, dir) {
 			return false
@@ -132,7 +132,7 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		}
 		e.Filename = relPath
 
-		dirEntries = append(dirEntries, &dirEntry{Entry: *e, fsys: fsys})
+		dirEntries = append(dirEntries, &dirEntry{Entry: e, fsys: fsys})
 		return true
 	})
 
@@ -141,9 +141,16 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 // Stat a file in the archive.
 func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
-	e := fsys.tree.Get(&Entry{Filename: name})
+	e := fsys.tree.Get(Entry{Filename: name})
 	if e != nil {
-		return &dirEntry{Entry: *e.(*Entry), fsys: fsys}, nil
+		return &dirEntry{Entry: e.(Entry), fsys: fsys}, nil
+	}
+
+	if name == "." {
+		return &dirEntry{Entry: Entry{
+			Filename: ".",
+			FileMode: fs.ModeDir,
+		}, fsys: fsys}, nil
 	}
 
 	return nil, fs.ErrNotExist
@@ -235,33 +242,32 @@ type Entry struct {
 	data      io.Reader
 }
 
-func (e *Entry) Name() string {
+func (e Entry) Name() string {
 	return e.Filename
 }
 
-func (e *Entry) Size() int64 {
+func (e Entry) Size() int64 {
 	return e.FileSize
 }
 
-func (e *Entry) Mode() fs.FileMode {
+func (e Entry) Mode() fs.FileMode {
 	return e.FileMode
 }
 
-func (e *Entry) ModTime() time.Time {
+func (e Entry) ModTime() time.Time {
 	return time.Unix(e.Timestamp, 0)
 }
 
-func (e *Entry) IsDir() bool {
+func (e Entry) IsDir() bool {
 	return e.Mode().IsDir()
 }
 
-func (e *Entry) Sys() any {
+func (e Entry) Sys() any {
 	return e
 }
 
-func (e *Entry) Less(than btree.Item) bool {
-	return strings.Compare(e.Filename, than.(*Entry).Filename) < 0
-
+func (e Entry) Less(than btree.Item) bool {
+	return strings.Compare(e.Filename, than.(Entry).Filename) < 0
 }
 
 type dirEntry struct {
@@ -269,18 +275,18 @@ type dirEntry struct {
 	fsys *FS
 }
 
-func (de *dirEntry) Name() string {
+func (de dirEntry) Name() string {
 	return de.Entry.Filename
 }
 
-func (de *dirEntry) IsDir() bool {
+func (de dirEntry) IsDir() bool {
 	return de.Type().IsDir()
 }
 
-func (de *dirEntry) Type() fs.FileMode {
+func (de dirEntry) Type() fs.FileMode {
 	return de.Entry.FileMode
 }
 
-func (de *dirEntry) Info() (fs.FileInfo, error) {
+func (de dirEntry) Info() (fs.FileInfo, error) {
 	return de.fsys.Stat(de.Entry.Filename)
 }
