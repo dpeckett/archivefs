@@ -33,19 +33,21 @@ package:
   RUN echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/backports.list
   RUN apt update
   # Tooling
-  RUN apt install -y git devscripts dpkg-dev debhelper-compat dh-sequence-golang \
+  RUN apt install -y git devscripts dpkg-dev debhelper-compat git-buildpackage libfaketime dh-sequence-golang \
     golang-any=2:1.22~3~bpo12+1 golang-go=2:1.22~3~bpo12+1 golang-src=2:1.22~3~bpo12+1
   # Build Dependencies
-  RUN apt install -y golang-github-google-btree-dev golang-github-stretchr-testify-dev
+  RUN apt install -y \
+    golang-github-google-btree-dev \
+    golang-github-stretchr-testify-dev
   RUN mkdir -p /workspace/golang-github-dpeckett-archivefs
   WORKDIR /workspace/golang-github-dpeckett-archivefs
   COPY . .
-  ENV EMAIL=damian@pecke.tt
-  RUN export DEBEMAIL="damian@pecke.tt" \
-    && export DEBFULLNAME="Damian Peckett" \
-    && export VERSION=$(git describe --tags --abbrev=0 | tr -d 'v') \
-    && dch --create --package golang-github-dpeckett-archivefs --newversion "${VERSION}-1" \
-      --distribution "UNRELEASED" --force-distribution  --controlmaint "Last Commit: $(git log -1 --pretty=format:'(%ai) %H %cn <%ce>')" \
+  COPY debian/scripts/generate-changelog.sh /usr/local/bin/generate-changelog.sh
+  RUN chmod +x /usr/local/bin/generate-changelog.sh
+  ENV DEBEMAIL="damian@pecke.tt"
+  ENV DEBFULLNAME="Damian Peckett"
+  RUN /usr/local/bin/generate-changelog.sh
+  RUN VERSION=$(git describe --tags --abbrev=0 | tr -d 'v') \
     && tar -czf ../golang-github-dpeckett-archivefs_${VERSION}.orig.tar.gz .
   RUN dpkg-buildpackage -us -uc
   SAVE ARTIFACT /workspace/*.deb AS LOCAL dist/
