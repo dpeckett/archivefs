@@ -8,6 +8,7 @@ Build-Depends: debhelper-compat (= 13),
                dh-sequence-golang,
                golang-any,
                golang-github-google-btree-dev,
+               golang-github-rogpeppe-go-internal-dev,
                golang-github-stretchr-testify-dev
 Testsuite: autopkgtest-pkg-go
 Standards-Version: 4.6.2
@@ -20,6 +21,7 @@ Package: golang-github-dpeckett-archivefs-dev
 Architecture: all
 Multi-Arch: foreign
 Depends: golang-github-google-btree-dev,
+         golang-github-rogpeppe-go-internal-dev,
          golang-github-stretchr-testify-dev,
          ${misc:Depends}
 Description: 

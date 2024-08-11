@@ -17,16 +17,15 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"syscall"
 
-	"github.com/dpeckett/archivefs"
 	"github.com/google/btree"
 )
 
 var (
-	_ fs.FS                = (*FS)(nil)
-	_ fs.ReadDirFS         = (*FS)(nil)
-	_ fs.StatFS            = (*FS)(nil)
-	_ archivefs.ReadLinkFS = (*FS)(nil)
+	_ fs.FS        = (*FS)(nil)
+	_ fs.ReadDirFS = (*FS)(nil)
+	_ fs.StatFS    = (*FS)(nil)
 )
 
 type FS struct {
@@ -189,6 +188,9 @@ func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
 	return fsys.statEntry(e.(entry))
 }
 
+// ReadLink returns the destination of the named symbolic link.
+// Experimental implementation of fs.ReadLinkFS:
+// https://github.com/golang/go/issues/49580
 func (fsys *FS) ReadLink(name string) (string, error) {
 	e := fsys.tree.Get(entry{Header: tar.Header{Name: sanitizePath(name)}})
 	if e := e.(entry); e.Typeflag != tar.TypeSymlink {
@@ -198,6 +200,9 @@ func (fsys *FS) ReadLink(name string) (string, error) {
 	return "", fs.ErrInvalid
 }
 
+// StatLink returns a FileInfo describing the file without following any symbolic links.
+// Experimental implementation of fs.ReadLinkFS:
+// https://github.com/golang/go/issues/49580
 func (fsys *FS) StatLink(name string) (fs.FileInfo, error) {
 	e := fsys.tree.Get(entry{Header: tar.Header{Name: sanitizePath(name)}})
 	if e == nil {
@@ -256,7 +261,35 @@ func (de dirEntry) IsDir() bool {
 }
 
 func (de dirEntry) Type() fs.FileMode {
-	return fs.FileMode(de.entry.Mode)
+	mode := fs.FileMode(de.entry.Mode) & fs.ModePerm
+
+	// Handle setuid, setgid, and sticky bits.
+	if de.entry.Mode&syscall.S_ISVTX != 0 {
+		mode |= fs.ModeSticky
+	}
+	if de.entry.Mode&syscall.S_ISUID != 0 {
+		mode |= fs.ModeSetuid
+	}
+	if de.entry.Mode&syscall.S_ISGID != 0 {
+		mode |= fs.ModeSetgid
+	}
+
+	switch de.entry.Typeflag {
+	case tar.TypeReg:
+		return mode
+	case tar.TypeSymlink:
+		return mode | fs.ModeSymlink
+	case tar.TypeChar:
+		return mode | fs.ModeCharDevice
+	case tar.TypeBlock:
+		return mode | fs.ModeDevice
+	case tar.TypeDir:
+		return mode | fs.ModeDir
+	case tar.TypeFifo:
+		return mode | fs.ModeNamedPipe
+	default:
+		return mode | fs.ModeIrregular
+	}
 }
 
 func (de dirEntry) Info() (fs.FileInfo, error) {

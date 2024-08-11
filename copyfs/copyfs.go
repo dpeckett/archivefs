@@ -77,8 +77,8 @@ func CopyFS(dir string, fsys fs.FS) error {
 		}
 
 		// TODO(panjf2000): handle symlinks with the help of fs.ReadLinkFS
-		// 		once https://go.dev/issue/49580 is done.
-		//		we also need filepathlite.IsLocal from https://go.dev/cl/564295.
+		// once https://go.dev/issue/49580 is done.
+		// we also need filepathlite.IsLocal from https://go.dev/cl/564295.
 		if !d.Type().IsRegular() {
 			return &os.PathError{Op: "CopyFS", Path: path, Err: fs.ErrInvalid}
 		}

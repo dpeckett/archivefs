@@ -38,6 +38,7 @@ package:
   # Build Dependencies
   RUN apt install -y \
     golang-github-google-btree-dev \
+    golang-github-rogpeppe-go-internal-dev \
     golang-github-stretchr-testify-dev
   RUN mkdir -p /workspace/golang-github-dpeckett-archivefs
   WORKDIR /workspace/golang-github-dpeckett-archivefs

@@ -54,6 +54,7 @@ import (
 
 	"github.com/dpeckett/archivefs/copyfs"
 	"github.com/dpeckett/archivefs/tarfs"
+	"github.com/rogpeppe/go-internal/dirhash"
 	"github.com/stretchr/testify/require"
 )
 
@@ -441,6 +442,39 @@ func TestTarFS(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTarFSDirHash(t *testing.T) {
+	f, err := os.Open("testdata/toybox.tar")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, f.Close())
+	})
+
+	fsys, err := tarfs.Open(f)
+	require.NoError(t, err)
+
+	var files []string
+	err = fs.WalkDir(fsys, ".", func(file string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
+		files = append(files, filepath.ToSlash(file))
+		return nil
+	})
+	require.NoError(t, err)
+
+	h, err := dirhash.Hash1(files, func(name string) (io.ReadCloser, error) {
+		return fsys.Open(name)
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "h1:adgxkqVceeKMyJdMZMvcUIbg94TthnXUmOeufCPuzQI=", h)
 }
 
 func TestTarFSCopy(t *testing.T) {
