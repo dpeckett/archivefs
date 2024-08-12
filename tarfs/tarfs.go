@@ -131,11 +131,11 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	dir := sanitizePath(name)
 	if dir == "." {
 		dir = ""
-	} else {
-		dir += "/"
 	}
 
+	var foundDir bool
 	var dirEntries []fs.DirEntry
+
 	fsys.tree.AscendGreaterOrEqual(entry{Header: tar.Header{Name: dir}}, func(item btree.Item) bool {
 		e := item.(entry)
 
@@ -143,7 +143,9 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 			return false
 		}
 
-		relPath := strings.TrimPrefix(e.Name, dir)
+		foundDir = true
+
+		relPath := strings.TrimPrefix(strings.TrimPrefix(e.Name, dir), "/")
 		if relPath == "" || relPath == "." || strings.Contains(relPath, "/") {
 			return true
 		}
@@ -151,6 +153,10 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		dirEntries = append(dirEntries, dirEntry{entry: e, fsys: fsys})
 		return true
 	})
+
+	if !foundDir {
+		return nil, fs.ErrNotExist
+	}
 
 	return dirEntries, nil
 }
