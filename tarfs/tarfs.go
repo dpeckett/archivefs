@@ -191,29 +191,18 @@ func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
 		return nil, fs.ErrNotExist
 	}
 
-	// If the file is a symlink, return the link target.
-	if e.(entry).Typeflag == tar.TypeSymlink {
-		linkname := e.(entry).Linkname
-		if !filepath.IsAbs(linkname) {
-			linkname = filepath.Clean(filepath.Join(filepath.Dir(name), e.(entry).Linkname))
-		}
+	// Use the original name (before it was resolved) for the entry.
+	renamedEntry := e.(entry)
+	renamedEntry.Name = filepath.Base(name)
 
-		e = fsys.tree.Get(entry{Header: tar.Header{Name: linkname}})
-		if e == nil {
-			return nil, fs.ErrNotExist
-		}
-	}
-
-	return fsys.statEntry(e.(entry))
+	return fsys.statEntry(renamedEntry)
 }
 
 // ReadLink returns the destination of the named symbolic link.
 // Experimental implementation of fs.ReadLinkFS:
 // https://github.com/golang/go/issues/49580
 func (fsys *FS) ReadLink(name string) (string, error) {
-	path := sanitizePath(name)
-
-	dir := filepath.Dir(path)
+	dir := filepath.Dir(sanitizePath(name))
 	if dir != "." {
 		var err error
 		dir, err = fsys.resolvePath(dir)
@@ -222,7 +211,7 @@ func (fsys *FS) ReadLink(name string) (string, error) {
 		}
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: filepath.Join(dir, filepath.Base(path))}})
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: filepath.Join(dir, filepath.Base(name))}})
 	if e := e.(entry); e.Typeflag == tar.TypeSymlink {
 		return e.Linkname, nil
 	}
@@ -234,9 +223,7 @@ func (fsys *FS) ReadLink(name string) (string, error) {
 // Experimental implementation of fs.ReadLinkFS:
 // https://github.com/golang/go/issues/49580
 func (fsys *FS) StatLink(name string) (fs.FileInfo, error) {
-	path := sanitizePath(name)
-
-	dir := filepath.Dir(path)
+	dir := filepath.Dir(sanitizePath(name))
 	if dir != "." {
 		var err error
 		dir, err = fsys.resolvePath(dir)
@@ -245,53 +232,72 @@ func (fsys *FS) StatLink(name string) (fs.FileInfo, error) {
 		}
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: filepath.Join(dir, filepath.Base(path))}})
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: filepath.Join(dir, filepath.Base(name))}})
 	if e == nil {
 		return nil, fs.ErrNotExist
 	}
 
-	return fsys.statEntry(e.(entry))
+	// Use the original name (before it was resolved) for the entry.
+	renamedEntry := e.(entry)
+	renamedEntry.Name = filepath.Base(name)
+
+	return fsys.statEntry(renamedEntry)
 }
 
 func (fsys *FS) statEntry(e entry) (fs.FileInfo, error) {
 	return e.FileInfo(), nil
 }
 
-// resolvePath resolves a path that may contain symlinks.
 func (fsys *FS) resolvePath(path string) (string, error) {
-	visited := make(map[string]bool)
-	currentPath := sanitizePath(path)
+	if path == "." {
+		return ".", nil
+	}
 
-	for {
-		// Avoid infinite loops by checking if the current path has been visited.
-		if visited[currentPath] {
-			return "", errors.New("cyclic symlink detected")
+	visitedPaths := make(map[string]bool)
+	var currentPath string
+	for _, comp := range splitPath(sanitizePath(path)) {
+		currentPath = filepath.Join(currentPath, comp)
+
+		// Check if the current path has already been visited
+		if visitedPaths[currentPath] {
+			return "", fmt.Errorf("symlink cycle detected at path: %s", currentPath)
 		}
-		visited[currentPath] = true
+		visitedPaths[currentPath] = true
 
 		e := fsys.tree.Get(entry{Header: tar.Header{Name: currentPath}})
 		if e == nil {
 			return "", fs.ErrNotExist
 		}
 
-		if e.(entry).Typeflag != tar.TypeSymlink {
-			// If it's not a symlink, return the current path as the resolved path.
-			return currentPath, nil
-		}
+		if e.(entry).Typeflag == tar.TypeSymlink {
+			linkname := e.(entry).Linkname
+			if !filepath.IsAbs(linkname) {
+				linkname = filepath.Join(filepath.Dir(currentPath), linkname)
+			}
 
-		// Follow the symlink
-		linkname := e.(entry).Linkname
-		if !filepath.IsAbs(linkname) {
-			linkname = filepath.Clean(filepath.Join(filepath.Dir(currentPath), linkname))
+			var err error
+			currentPath, err = fsys.resolvePath(linkname)
+			if err != nil {
+				return "", err
+			}
 		}
-
-		// Update currentPath to the link target and continue resolving.
-		currentPath = sanitizePath(linkname)
 	}
+
+	return currentPath, nil
 }
 
 func sanitizePath(name string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(filepath.Clean(strings.TrimSpace(name)), "/"), "./")
+}
+
+func splitPath(path string) []string {
+	var components []string
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part != "" {
+			components = append(components, part)
+		}
+	}
+	return components
 }
 
 type file struct {

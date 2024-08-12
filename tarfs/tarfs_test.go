@@ -523,3 +523,36 @@ func TestTarFSStat(t *testing.T) {
 		require.Equal(t, fs.ModeSymlink|0o777, fi.Mode())
 	})
 }
+
+func TestTarFSResolveSymlink(t *testing.T) {
+	f, err := os.Open("testdata/toybox.tar")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, f.Close())
+	})
+
+	fsys, err := tarfs.Open(f)
+	require.NoError(t, err)
+
+	t.Run("Open", func(t *testing.T) {
+		f, err := fsys.Open("bin/sh")
+		require.NoError(t, err)
+		_ = f.Close()
+	})
+
+	t.Run("Stat", func(t *testing.T) {
+		fi, err := fsys.Stat("bin/sh")
+		require.NoError(t, err)
+
+		require.False(t, fi.IsDir())
+		require.Equal(t, "sh", fi.Name())
+		require.Equal(t, fs.FileMode(0o555), fi.Mode())
+	})
+
+	t.Run("ReadDir", func(t *testing.T) {
+		entries, err := fsys.ReadDir("bin")
+		require.NoError(t, err)
+
+		require.Len(t, entries, 208)
+	})
+}
