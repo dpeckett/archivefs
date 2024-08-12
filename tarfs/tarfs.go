@@ -226,7 +226,7 @@ type file struct {
 }
 
 func (f *file) Stat() (fs.FileInfo, error) {
-	return f.fsys.Stat(f.entry.Name)
+	return f.fsys.statEntry(f.entry)
 }
 
 func (f *file) Read(p []byte) (n int, err error) {
@@ -292,7 +292,7 @@ func (de dirEntry) Type() fs.FileMode {
 }
 
 func (de dirEntry) Info() (fs.FileInfo, error) {
-	return de.fsys.Stat(de.entry.Name)
+	return de.fsys.statEntry(de.entry)
 }
 
 // readerWithOffset is a wrapper around io.ReaderAt that keeps track of the current offset.
