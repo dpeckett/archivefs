@@ -145,7 +145,6 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		if relPath == "" || relPath == "." || strings.Contains(relPath, "/") {
 			return true
 		}
-		e.Name = relPath
 
 		dirEntries = append(dirEntries, dirEntry{entry: e, fsys: fsys})
 		return true
@@ -253,7 +252,7 @@ type dirEntry struct {
 }
 
 func (de dirEntry) Name() string {
-	return de.entry.Name
+	return filepath.Base(de.entry.Name)
 }
 
 func (de dirEntry) IsDir() bool {
