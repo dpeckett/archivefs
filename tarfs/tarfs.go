@@ -104,7 +104,9 @@ func Open(ra io.ReaderAt) (*FS, error) {
 
 		tree.ReplaceOrInsert(entry{
 			Header: *h,
-			data:   io.NewSectionReader(ra, begin, r.offset-begin),
+			data: func() io.Reader {
+				return io.NewSectionReader(ra, begin, r.offset-begin)
+			},
 		})
 	}
 
@@ -114,7 +116,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 func (fsys *FS) Open(name string) (fs.File, error) {
 	e := fsys.tree.Get(entry{Header: tar.Header{Name: sanitizePath(name)}})
 	if e != nil {
-		tr := tar.NewReader(e.(entry).data)
+		tr := tar.NewReader(e.(entry).data())
 		if _, err := tr.Next(); err != nil {
 			return nil, fmt.Errorf("failed to read file %s: %w", name, err)
 		}
@@ -239,7 +241,7 @@ func (f *file) Close() error {
 
 type entry struct {
 	tar.Header
-	data io.Reader
+	data func() io.Reader
 }
 
 func (e entry) Less(than btree.Item) bool {
