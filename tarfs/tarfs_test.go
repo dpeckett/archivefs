@@ -393,15 +393,18 @@ func TestTarFS(t *testing.T) {
 			require.NoError(t, err)
 
 			for _, file := range v.files {
-				f, err := fsys.Open(file.Name)
-				require.NoError(t, err)
-
-				h := md5.New()
-				_, err = io.Copy(h, f)
-				require.NoError(t, err)
 
 				var fi fs.FileInfo
+				var sum string
 				if !file.IsSymlink {
+					f, err := fsys.Open(file.Name)
+					require.NoError(t, err, file.Name)
+
+					h := md5.New()
+					_, err = io.Copy(h, f)
+					require.NoError(t, err)
+					sum = fmt.Sprintf("%x", h.Sum(nil))
+
 					fi, err = f.Stat()
 					require.NoError(t, err)
 				} else {
@@ -436,7 +439,7 @@ func TestTarFS(t *testing.T) {
 				}
 
 				if file.Sum != "" {
-					require.Equal(t, file.Sum, fmt.Sprintf("%x", h.Sum(nil)))
+					require.Equal(t, file.Sum, sum)
 				}
 			}
 		})
