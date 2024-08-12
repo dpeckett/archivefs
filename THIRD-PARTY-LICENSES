@@ -4,7 +4,6 @@ Upstream-Contact: Damian Peckett <damian@pecke.tt>
 Source: https://github.com/damian/archivefs
 
 Files:
- copyfs/*.go
  tarfs/tarfs_test.go
 Copyright:
  Copyright (c) 2009 The Go Authors. All rights reserved.

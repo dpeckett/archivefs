@@ -192,7 +192,7 @@ func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
 // https://github.com/golang/go/issues/49580
 func (fsys *FS) ReadLink(name string) (string, error) {
 	e := fsys.tree.Get(entry{Header: tar.Header{Name: sanitizePath(name)}})
-	if e := e.(entry); e.Typeflag != tar.TypeSymlink {
+	if e := e.(entry); e.Typeflag == tar.TypeSymlink {
 		return e.Linkname, nil
 	}
 
