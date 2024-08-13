@@ -211,7 +211,7 @@ func (fsys *FS) ReadLink(name string) (string, error) {
 	}
 
 	if e := e.(entry); e.Typeflag == tar.TypeSymlink {
-		return sanitizePath(e.Linkname), nil
+		return e.Linkname, nil
 	}
 
 	return "", fs.ErrInvalid
