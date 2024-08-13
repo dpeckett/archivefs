@@ -58,6 +58,9 @@ func Open(ra io.ReaderAt) (*FS, error) {
 			// NOP
 		case tar.TypeXGlobalHeader:
 			continue // Ignore metadata-only entries.
+		case tar.TypeLink:
+			// We don't support hard links, so replace them with symlinks.
+			h.Typeflag = tar.TypeSymlink
 		default:
 			return nil, fmt.Errorf("unsupported file type: %s, %c", h.Name, h.Typeflag)
 		}
