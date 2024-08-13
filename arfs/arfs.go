@@ -40,8 +40,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/google/btree"
 )
 
 var (
@@ -52,7 +50,7 @@ var (
 
 // FS is a filesystem that represents a Debian .deb flavored `ar(1)` archive.
 type FS struct {
-	tree *btree.BTree
+	entries map[string]*Entry
 }
 
 // Open a new `ar(1)` archive from the given `io.ReaderAt`.
@@ -63,9 +61,8 @@ func Open(ra io.ReaderAt) (*FS, error) {
 		return nil, err
 	}
 
-	tree := btree.New(2)
-
 	// Read the entries from the archive.
+	entries := map[string]*Entry{}
 	for {
 		line := make([]byte, 60)
 
@@ -90,53 +87,39 @@ func Open(ra io.ReaderAt) (*FS, error) {
 			return nil, err
 		}
 
-		e.data = io.NewSectionReader(ra, offset+int64(n), e.FileSize)
+		begin := offset + int64(n)
+		e.data = func() io.Reader {
+			return io.NewSectionReader(ra, begin, e.FileSize)
+		}
 		offset += int64(n) + e.FileSize + (e.FileSize % 2)
 
-		tree.ReplaceOrInsert(*e)
+		entries[e.Filename] = e
 	}
 
-	return &FS{tree: tree}, nil
+	return &FS{entries: entries}, nil
 }
 
 // Open a file from the archive.
 func (fsys *FS) Open(name string) (fs.File, error) {
-	e := fsys.tree.Get(Entry{Filename: name})
-	if e != nil {
-		return &file{Entry: e.(Entry), fsys: fsys}, nil
+	name = sanitizePath(name)
+
+	e, ok := fsys.entries[name]
+	if !ok {
+		return nil, fs.ErrNotExist
 	}
 
-	return nil, fs.ErrNotExist
+	return &file{Entry: e, Reader: e.data()}, nil
 }
 
 // ReadDir reads the contents of the archive.
 func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	dir := sanitizePath(name)
 
-	var foundDir bool
 	var dirEntries []fs.DirEntry
-
-	fsys.tree.Ascend(func(item btree.Item) bool {
-		e := item.(Entry)
-
-		if !strings.HasPrefix(e.Filename, dir) {
-			return false
+	for path, dirent := range fsys.entries {
+		if sanitizePath(filepath.Dir(path)) == dir {
+			dirEntries = append(dirEntries, dirent)
 		}
-
-		foundDir = true
-
-		relPath := sanitizePath(strings.TrimPrefix(strings.TrimPrefix(e.Filename, dir), "/"))
-		if relPath == "" || strings.Contains(relPath, "/") {
-			return true
-		}
-		e.Filename = relPath
-
-		dirEntries = append(dirEntries, &dirEntry{Entry: e, fsys: fsys})
-		return true
-	})
-
-	if !foundDir {
-		return nil, fs.ErrNotExist
 	}
 
 	return dirEntries, nil
@@ -147,18 +130,18 @@ func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
 	name = sanitizePath(name)
 
 	if name == "" {
-		return &dirEntry{Entry: Entry{
+		return &Entry{
 			Filename: ".",
 			FileMode: fs.ModeDir,
-		}, fsys: fsys}, nil
+		}, nil
 	}
 
-	e := fsys.tree.Get(Entry{Filename: name})
-	if e != nil {
-		return &dirEntry{Entry: e.(Entry), fsys: fsys}, nil
+	e, ok := fsys.entries[name]
+	if !ok {
+		return nil, fs.ErrNotExist
 	}
 
-	return nil, fs.ErrNotExist
+	return e, nil
 }
 
 // Take the AR format line, and create an ArEntry (without .Data set)
@@ -172,14 +155,14 @@ func parseArEntry(line []byte) (*Entry, error) {
 		return nil, errors.New("malformed file entry line endings")
 	}
 
-	fileMode, err := strconv.ParseUint(strings.TrimSpace(string(line[40:48])), 8, 32)
+	mode, err := strconv.ParseUint(strings.TrimSpace(string(line[40:48])), 8, 32)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse file mode: %w", err)
 	}
 
 	e := Entry{
 		Filename: sanitizePath(string(line[0:16])),
-		FileMode: fs.FileMode(fileMode),
+		FileMode: fs.FileMode(mode),
 	}
 
 	for target, value := range map[*int64][]byte{
@@ -221,16 +204,12 @@ func sanitizePath(name string) string {
 }
 
 type file struct {
-	Entry
-	fsys *FS
+	*Entry
+	io.Reader
 }
 
 func (f *file) Stat() (fs.FileInfo, error) {
-	return &f.Entry, nil
-}
-
-func (f *file) Read(b []byte) (int, error) {
-	return f.data.Read(b)
+	return f.Entry, nil
 }
 
 func (f *file) Close() error {
@@ -244,54 +223,37 @@ type Entry struct {
 	Gid       int64
 	FileMode  fs.FileMode
 	FileSize  int64
-	data      io.Reader
+	data      func() io.Reader
 }
 
-func (e Entry) Name() string {
-	return e.Filename
+func (e *Entry) Name() string {
+	return filepath.Base(e.Filename)
 }
 
-func (e Entry) Size() int64 {
+func (e *Entry) Size() int64 {
 	return e.FileSize
 }
 
-func (e Entry) Mode() fs.FileMode {
+func (e *Entry) Mode() fs.FileMode {
 	return e.FileMode
 }
 
-func (e Entry) ModTime() time.Time {
+func (e *Entry) ModTime() time.Time {
 	return time.Unix(e.Timestamp, 0)
 }
 
-func (e Entry) IsDir() bool {
-	return e.Mode().IsDir()
+func (e *Entry) IsDir() bool {
+	return e.FileMode&fs.ModeDir != 0
 }
 
-func (e Entry) Sys() any {
+func (e *Entry) Sys() any {
 	return e
 }
 
-func (e Entry) Less(than btree.Item) bool {
-	return strings.Compare(e.Filename, than.(Entry).Filename) < 0
+func (e *Entry) Type() fs.FileMode {
+	return e.FileMode & fs.ModeType
 }
 
-type dirEntry struct {
-	Entry
-	fsys *FS
-}
-
-func (de dirEntry) Name() string {
-	return de.Entry.Filename
-}
-
-func (de dirEntry) IsDir() bool {
-	return de.Type().IsDir()
-}
-
-func (de dirEntry) Type() fs.FileMode {
-	return de.Entry.FileMode
-}
-
-func (de dirEntry) Info() (fs.FileInfo, error) {
-	return de, nil
+func (e *Entry) Info() (fs.FileInfo, error) {
+	return e, nil
 }

@@ -7,7 +7,6 @@ Rules-Requires-Root: no
 Build-Depends: debhelper-compat (= 13),
                dh-sequence-golang,
                golang-any,
-               golang-github-google-btree-dev,
                golang-github-rogpeppe-go-internal-dev,
                golang-github-stretchr-testify-dev
 Testsuite: autopkgtest-pkg-go
@@ -20,8 +19,7 @@ XS-Go-Import-Path: github.com/dpeckett/archivefs
 Package: golang-github-dpeckett-archivefs-dev
 Architecture: all
 Multi-Arch: foreign
-Depends: golang-github-google-btree-dev,
-         golang-github-rogpeppe-go-internal-dev,
+Depends: golang-github-rogpeppe-go-internal-dev,
          golang-github-stretchr-testify-dev,
          ${misc:Depends}
 Description: 

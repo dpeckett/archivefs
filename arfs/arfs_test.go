@@ -33,8 +33,8 @@ func TestArFS(t *testing.T) {
 
 	require.Equal(t, "hello.txt", fi.Name())
 	require.Equal(t, int64(1361157466), fi.ModTime().Unix())
-	require.Equal(t, int64(501), fi.Sys().(arfs.Entry).Uid)
-	require.Equal(t, int64(20), fi.Sys().(arfs.Entry).Gid)
+	require.Equal(t, int64(501), fi.Sys().(*arfs.Entry).Uid)
+	require.Equal(t, int64(20), fi.Sys().(*arfs.Entry).Gid)
 	require.Equal(t, fs.FileMode(33188), fi.Mode())
 
 	// Now, test that we can read the contents of the file.

@@ -16,10 +16,8 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
-	"syscall"
-
-	"github.com/google/btree"
 )
 
 var (
@@ -29,24 +27,14 @@ var (
 )
 
 type FS struct {
-	tree *btree.BTree
+	root dirent
 }
 
 func Open(ra io.ReaderAt) (*FS, error) {
 	r := &readerWithOffset{ra: ra}
 	tr := tar.NewReader(r)
 
-	tree := btree.New(2)
-
-	// Add a default root directory entry.
-	tree.ReplaceOrInsert(entry{
-		Header: tar.Header{
-			Typeflag: tar.TypeDir,
-			Name:     ".",
-			Mode:     0o755,
-		},
-	})
-
+	dirents := map[string]*dirent{}
 	for {
 		// round to next 512 byte boundary.
 		begin := (r.offset + 511) &^ 511
@@ -70,9 +58,6 @@ func Open(ra io.ReaderAt) (*FS, error) {
 			// NOP
 		case tar.TypeXGlobalHeader:
 			continue // Ignore metadata-only entries.
-		case tar.TypeLink:
-			// We don't support hard links, so replace them with symlinks.
-			h.Typeflag = tar.TypeSymlink
 		default:
 			return nil, fmt.Errorf("unsupported file type: %s, %c", h.Name, h.Typeflag)
 		}
@@ -87,195 +72,187 @@ func Open(ra io.ReaderAt) (*FS, error) {
 
 		// Create a default directory entry for each parent directory.
 		for dir := filepath.Dir(h.Name); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
-			e := entry{
+			// Create a default directory entry if it doesn't exist.
+			// Don't worry if we see one later, we'll just overwrite it.
+			dirents[dir] = &dirent{
 				Header: tar.Header{
 					Typeflag: tar.TypeDir,
 					Name:     dir,
 					Mode:     0o755,
 				},
 			}
-
-			// Create a default directory entry if it doesn't exist.
-			// Don't worry if we see one later, we'll just overwrite it.
-			if tree.Get(e) == nil {
-				tree.ReplaceOrInsert(e)
-			}
 		}
 
-		tree.ReplaceOrInsert(entry{
+		size := r.offset - begin
+
+		dirents[h.Name] = &dirent{
 			Header: *h,
 			data: func() io.Reader {
-				return io.NewSectionReader(ra, begin, r.offset-begin)
+				return io.NewSectionReader(ra, begin, size)
 			},
-		})
+		}
 	}
 
-	return &FS{tree: tree}, nil
+	var paths []string
+	for path := range dirents {
+		paths = append(paths, path)
+	}
+
+	slices.Sort(paths)
+
+	root := dirent{
+		Header: tar.Header{
+			Typeflag: tar.TypeDir,
+			Name:     ".",
+			Mode:     0o755,
+		},
+	}
+
+	for _, path := range paths {
+		d := dirents[path]
+
+		dir, err := resolve(&root, filepath.Dir(path))
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve directory %q: %w", filepath.Dir(path), err)
+		}
+
+		dir.addChild(d)
+	}
+
+	return &FS{root: root}, nil
 }
 
 func (fsys *FS) Open(name string) (fs.File, error) {
-	path, err := fsys.resolve(name, false)
+	d, err := resolve(&fsys.root, name)
 	if err != nil {
 		return nil, err
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: path}})
-	if e == nil {
-		return nil, fs.ErrNotExist
-	}
-
-	tr := tar.NewReader(e.(entry).data())
+	tr := tar.NewReader(d.data())
 	if _, err := tr.Next(); err != nil {
 		return nil, fmt.Errorf("failed to read file %s: %w", name, err)
 	}
 
-	return &file{entry: e.(entry), fsys: fsys, r: tr}, nil
+	return &file{dirent: d, r: tr}, nil
 }
 
 func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	dir, err := fsys.resolve(name, false)
+	d, err := resolve(&fsys.root, name)
 	if err != nil {
 		return nil, err
 	}
 
-	var foundDir bool
-	var dirEntries []fs.DirEntry
-
-	fsys.tree.AscendGreaterOrEqual(entry{Header: tar.Header{Name: dir}}, func(item btree.Item) bool {
-		e := item.(entry)
-
-		if !strings.HasPrefix(e.Name, dir) {
-			return false
-		}
-
-		foundDir = true
-
-		relPath := sanitizePath(strings.TrimPrefix(strings.TrimPrefix(e.Name, dir), "/"))
-		if relPath == "" || strings.Contains(relPath, "/") {
-			return true
-		}
-
-		dirEntries = append(dirEntries, dirEntry{entry: e, fsys: fsys})
-		return true
-	})
-
-	if !foundDir {
-		return nil, fs.ErrNotExist
+	var children []fs.DirEntry
+	for _, child := range d.children {
+		children = append(children, child)
 	}
 
-	return dirEntries, nil
+	slices.SortFunc(children, func(a, b fs.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
+
+	return children, nil
 }
 
 func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
-	originalName := filepath.Base(name)
+	if sanitizePath(name) == "" {
+		d := &dirent{
+			Header: tar.Header{
+				Typeflag: tar.TypeDir,
+				Name:     ".",
+				Mode:     0o755,
+			},
+		}
 
-	name, err := fsys.resolve(name, false)
+		return d.Info()
+	}
+
+	d, err := resolve(&fsys.root, name)
 	if err != nil {
 		return nil, err
 	}
 
-	if name == "" {
-		return fsys.statEntry(fsys.tree.Get(entry{
-			Header: tar.Header{
-				Typeflag: tar.TypeDir,
-				Name:     ".",
-				Mode:     0o777,
-			},
-		}).(entry))
-	}
+	// Use the original name (as we may be resolving a symlink).
+	renamed := *d
+	renamed.Header.Name = name
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: name}})
-	if e == nil {
-		return nil, fs.ErrNotExist
-	}
-
-	// Use the original name (before it was resolved) for the entry.
-	renamedEntry := e.(entry)
-	renamedEntry.Name = originalName
-
-	return fsys.statEntry(renamedEntry)
+	return renamed.Info()
 }
 
 // ReadLink returns the destination of the named symbolic link.
 // Experimental implementation of fs.ReadLinkFS:
 // https://github.com/golang/go/issues/49580
 func (fsys *FS) ReadLink(name string) (string, error) {
-	name, err := fsys.resolve(name, true)
+	d, err := resolve(&fsys.root, filepath.Dir(name))
 	if err != nil {
 		return "", err
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: name}})
-	if e == nil {
+	d, found := d.findChild(filepath.Base(name))
+	if !found {
 		return "", fs.ErrNotExist
 	}
 
-	if e := e.(entry); e.Typeflag == tar.TypeSymlink {
-		return e.Linkname, nil
+	if d.Type()&fs.ModeSymlink == 0 {
+		return "", fs.ErrInvalid
 	}
 
-	return "", fs.ErrInvalid
+	return d.Linkname, nil
 }
 
 // StatLink returns a FileInfo describing the file without following any symbolic links.
 // Experimental implementation of fs.ReadLinkFS:
 // https://github.com/golang/go/issues/49580
 func (fsys *FS) StatLink(name string) (fs.FileInfo, error) {
-	originalName := filepath.Base(name)
-
-	name, err := fsys.resolve(name, true)
+	d, err := resolve(&fsys.root, filepath.Dir(name))
 	if err != nil {
 		return nil, err
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: name}})
-	if e == nil {
+	d, found := d.findChild(filepath.Base(name))
+	if !found {
 		return nil, fs.ErrNotExist
 	}
 
-	// Use the original name (before it was resolved) for the entry.
-	renamedEntry := e.(entry)
-	renamedEntry.Name = originalName
-
-	return fsys.statEntry(renamedEntry)
+	return d.Info()
 }
 
-func (fsys *FS) statEntry(e entry) (fs.FileInfo, error) {
-	return e.FileInfo(), nil
-}
-
-func (fsys *FS) resolve(name string, noResolveLastComponent bool) (string, error) {
-	var currentPath string
+func resolve(root *dirent, name string) (*dirent, error) {
+	d := root
 
 	name = sanitizePath(name)
 	if name == "" {
-		return "", nil
+		return d, nil
 	}
 
-	components := strings.Split(name, "/")
-	for i, comp := range components {
-		currentPath = filepath.Join(currentPath, comp)
-
-		e := fsys.tree.Get(entry{Header: tar.Header{Name: currentPath}})
-		if e == nil {
-			return "", fs.ErrNotExist
+	for _, component := range strings.Split(name, "/") {
+		var found bool
+		d, found = d.findChild(component)
+		if !found {
+			return nil, fs.ErrNotExist
 		}
 
-		if e.(entry).Typeflag == tar.TypeSymlink && !(noResolveLastComponent && i == len(components)-1) {
-			target := e.(entry).Linkname
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(currentPath), target)
-			}
+		if d.Type()&fs.ModeSymlink != 0 {
+			// Resolve the symlink.
+			target := d.Linkname
 
 			var err error
-			currentPath, err = fsys.resolve(sanitizePath(target), false)
-			if err != nil {
-				return "", err
+			if !filepath.IsAbs(target) && d.parent != nil {
+				d, err = resolve(d.parent, target)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				// The target is an absolute path or the dirent is the root dirent.
+				d, err = resolve(root, target)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
 
-	return currentPath, nil
+	return d, nil
 }
 
 func sanitizePath(name string) string {
@@ -283,13 +260,12 @@ func sanitizePath(name string) string {
 }
 
 type file struct {
-	entry
-	fsys *FS
-	r    io.Reader
+	*dirent
+	r io.Reader
 }
 
 func (f *file) Stat() (fs.FileInfo, error) {
-	return f.fsys.statEntry(f.entry)
+	return f.Info()
 }
 
 func (f *file) Read(p []byte) (n int, err error) {
@@ -300,62 +276,65 @@ func (f *file) Close() error {
 	return nil
 }
 
-type entry struct {
+var _ fs.DirEntry = &dirent{}
+
+type dirent struct {
 	tar.Header
-	data func() io.Reader
+	parent   *dirent
+	children map[string]*dirent
+	data     func() io.Reader
 }
 
-func (e entry) Less(than btree.Item) bool {
-	return strings.Compare(e.Name, than.(entry).Name) < 0
+func (d *dirent) findChild(name string) (*dirent, bool) {
+	c, ok := d.children[name]
+	return c, ok
 }
 
-type dirEntry struct {
-	entry
-	fsys *FS
-}
-
-func (de dirEntry) Name() string {
-	return filepath.Base(de.entry.Name)
-}
-
-func (de dirEntry) IsDir() bool {
-	return de.entry.Typeflag == tar.TypeDir
-}
-
-func (de dirEntry) Type() fs.FileMode {
-	mode := fs.FileMode(de.entry.Mode) & fs.ModePerm
-
-	// Handle setuid, setgid, and sticky bits.
-	if de.entry.Mode&syscall.S_ISVTX != 0 {
-		mode |= fs.ModeSticky
-	}
-	if de.entry.Mode&syscall.S_ISUID != 0 {
-		mode |= fs.ModeSetuid
-	}
-	if de.entry.Mode&syscall.S_ISGID != 0 {
-		mode |= fs.ModeSetgid
+func (d *dirent) addChild(child *dirent) {
+	if d.children == nil {
+		d.children = make(map[string]*dirent)
 	}
 
-	switch de.entry.Typeflag {
+	c := *child
+	c.parent = d
+
+	// do we already have a child with the same name?
+	if existing, ok := d.children[c.Name()]; ok {
+		c.children = existing.children
+	}
+
+	d.children[c.Name()] = &c
+}
+
+func (d *dirent) Name() string {
+	return filepath.Base(d.Header.Name)
+}
+
+func (d *dirent) IsDir() bool {
+	return d.Typeflag == tar.TypeDir
+}
+
+func (d *dirent) Type() fs.FileMode {
+	switch d.Typeflag {
 	case tar.TypeReg:
-		return mode
+		return 0
 	case tar.TypeSymlink:
-		return mode | fs.ModeSymlink
+		return fs.ModeSymlink
 	case tar.TypeChar:
-		return mode | fs.ModeCharDevice
+		return fs.ModeCharDevice
 	case tar.TypeBlock:
-		return mode | fs.ModeDevice
+		return fs.ModeDevice
 	case tar.TypeDir:
-		return mode | fs.ModeDir
+		return fs.ModeDir
 	case tar.TypeFifo:
-		return mode | fs.ModeNamedPipe
+		return fs.ModeNamedPipe
 	default:
-		return mode | fs.ModeIrregular
+		return fs.ModeIrregular
 	}
 }
 
-func (de dirEntry) Info() (fs.FileInfo, error) {
-	return de.fsys.statEntry(de.entry)
+func (d *dirent) Info() (fs.FileInfo, error) {
+	return d.FileInfo(), nil
 }
 
 // readerWithOffset is a wrapper around io.ReaderAt that keeps track of the current offset.
