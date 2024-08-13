@@ -120,16 +120,16 @@ func (fsys *FS) Open(name string) (fs.File, error) {
 	}
 
 	e := fsys.tree.Get(entry{Header: tar.Header{Name: path}})
-	if e != nil {
-		tr := tar.NewReader(e.(entry).data())
-		if _, err := tr.Next(); err != nil {
-			return nil, fmt.Errorf("failed to read file %s: %w", name, err)
-		}
-
-		return &file{entry: e.(entry), fsys: fsys, r: tr}, nil
+	if e == nil {
+		return nil, fs.ErrNotExist
 	}
 
-	return nil, fs.ErrNotExist
+	tr := tar.NewReader(e.(entry).data())
+	if _, err := tr.Next(); err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", name, err)
+	}
+
+	return &file{entry: e.(entry), fsys: fsys, r: tr}, nil
 }
 
 func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
@@ -212,6 +212,10 @@ func (fsys *FS) ReadLink(name string) (string, error) {
 	}
 
 	e := fsys.tree.Get(entry{Header: tar.Header{Name: filepath.Join(dir, filepath.Base(name))}})
+	if e == nil {
+		return "", fs.ErrNotExist
+	}
+
 	if e := e.(entry); e.Typeflag == tar.TypeSymlink {
 		return e.Linkname, nil
 	}
