@@ -112,13 +112,10 @@ func (fsys *FS) Open(name string) (fs.File, error) {
 // ReadDir reads the contents of the archive.
 func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	dir := sanitizePath(name)
-	if dir == "." {
-		dir = ""
-	} else {
-		dir += "/"
-	}
 
+	var foundDir bool
 	var dirEntries []fs.DirEntry
+
 	fsys.tree.Ascend(func(item btree.Item) bool {
 		e := item.(Entry)
 
@@ -126,8 +123,10 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 			return false
 		}
 
-		relPath := strings.TrimPrefix(e.Filename, dir)
-		if relPath == "" || relPath == "." || strings.Contains(relPath, "/") {
+		foundDir = true
+
+		relPath := sanitizePath(strings.TrimPrefix(strings.TrimPrefix(e.Filename, dir), "/"))
+		if relPath == "" || strings.Contains(relPath, "/") {
 			return true
 		}
 		e.Filename = relPath
@@ -136,21 +135,27 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		return true
 	})
 
+	if !foundDir {
+		return nil, fs.ErrNotExist
+	}
+
 	return dirEntries, nil
 }
 
 // Stat a file in the archive.
 func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
-	e := fsys.tree.Get(Entry{Filename: name})
-	if e != nil {
-		return &dirEntry{Entry: e.(Entry), fsys: fsys}, nil
-	}
+	name = sanitizePath(name)
 
-	if name == "." {
+	if name == "" {
 		return &dirEntry{Entry: Entry{
 			Filename: ".",
 			FileMode: fs.ModeDir,
 		}, fsys: fsys}, nil
+	}
+
+	e := fsys.tree.Get(Entry{Filename: name})
+	if e != nil {
+		return &dirEntry{Entry: e.(Entry), fsys: fsys}, nil
 	}
 
 	return nil, fs.ErrNotExist
@@ -212,7 +217,7 @@ func checkAr(ra io.ReaderAt) (int64, error) {
 }
 
 func sanitizePath(name string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(filepath.Clean(strings.TrimSpace(name)), "/"), "./")
+	return strings.TrimPrefix(strings.TrimPrefix(filepath.Clean(filepath.ToSlash(strings.TrimSpace(name))), "."), "/")
 }
 
 type file struct {
@@ -221,7 +226,7 @@ type file struct {
 }
 
 func (f *file) Stat() (fs.FileInfo, error) {
-	return f.fsys.Stat(f.Entry.Filename)
+	return &f.Entry, nil
 }
 
 func (f *file) Read(b []byte) (int, error) {
@@ -288,5 +293,5 @@ func (de dirEntry) Type() fs.FileMode {
 }
 
 func (de dirEntry) Info() (fs.FileInfo, error) {
-	return de.fsys.Stat(de.Entry.Filename)
+	return de, nil
 }

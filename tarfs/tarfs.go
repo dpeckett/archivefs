@@ -114,7 +114,7 @@ func Open(ra io.ReaderAt) (*FS, error) {
 }
 
 func (fsys *FS) Open(name string) (fs.File, error) {
-	path, err := fsys.resolvePath(name)
+	path, err := fsys.resolve(name, false)
 	if err != nil {
 		return nil, err
 	}
@@ -133,13 +133,9 @@ func (fsys *FS) Open(name string) (fs.File, error) {
 }
 
 func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	dir, err := fsys.resolvePath(name)
+	dir, err := fsys.resolve(name, false)
 	if err != nil {
 		return nil, err
-	}
-
-	if dir == "." {
-		dir = ""
 	}
 
 	var foundDir bool
@@ -154,8 +150,8 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 		foundDir = true
 
-		relPath := strings.TrimPrefix(strings.TrimPrefix(e.Name, dir), "/")
-		if relPath == "" || relPath == "." || strings.Contains(relPath, "/") {
+		relPath := sanitizePath(strings.TrimPrefix(strings.TrimPrefix(e.Name, dir), "/"))
+		if relPath == "" || strings.Contains(relPath, "/") {
 			return true
 		}
 
@@ -171,29 +167,31 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 }
 
 func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
-	path, err := fsys.resolvePath(name)
+	originalName := filepath.Base(name)
+
+	name, err := fsys.resolve(name, false)
 	if err != nil {
 		return nil, err
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: path}})
-	if e == nil {
-		if name == "." {
-			return fsys.statEntry(fsys.tree.Get(entry{
-				Header: tar.Header{
-					Typeflag: tar.TypeDir,
-					Name:     ".",
-					Mode:     0o777,
-				},
-			}).(entry))
-		}
+	if name == "" {
+		return fsys.statEntry(fsys.tree.Get(entry{
+			Header: tar.Header{
+				Typeflag: tar.TypeDir,
+				Name:     ".",
+				Mode:     0o777,
+			},
+		}).(entry))
+	}
 
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: name}})
+	if e == nil {
 		return nil, fs.ErrNotExist
 	}
 
 	// Use the original name (before it was resolved) for the entry.
 	renamedEntry := e.(entry)
-	renamedEntry.Name = filepath.Base(name)
+	renamedEntry.Name = originalName
 
 	return fsys.statEntry(renamedEntry)
 }
@@ -202,22 +200,18 @@ func (fsys *FS) Stat(name string) (fs.FileInfo, error) {
 // Experimental implementation of fs.ReadLinkFS:
 // https://github.com/golang/go/issues/49580
 func (fsys *FS) ReadLink(name string) (string, error) {
-	dir := filepath.Dir(sanitizePath(name))
-	if dir != "." {
-		var err error
-		dir, err = fsys.resolvePath(dir)
-		if err != nil {
-			return "", err
-		}
+	name, err := fsys.resolve(name, true)
+	if err != nil {
+		return "", err
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: filepath.Join(dir, filepath.Base(name))}})
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: name}})
 	if e == nil {
 		return "", fs.ErrNotExist
 	}
 
 	if e := e.(entry); e.Typeflag == tar.TypeSymlink {
-		return e.Linkname, nil
+		return sanitizePath(e.Linkname), nil
 	}
 
 	return "", fs.ErrInvalid
@@ -227,23 +221,21 @@ func (fsys *FS) ReadLink(name string) (string, error) {
 // Experimental implementation of fs.ReadLinkFS:
 // https://github.com/golang/go/issues/49580
 func (fsys *FS) StatLink(name string) (fs.FileInfo, error) {
-	dir := filepath.Dir(sanitizePath(name))
-	if dir != "." {
-		var err error
-		dir, err = fsys.resolvePath(dir)
-		if err != nil {
-			return nil, err
-		}
+	originalName := filepath.Base(name)
+
+	name, err := fsys.resolve(name, true)
+	if err != nil {
+		return nil, err
 	}
 
-	e := fsys.tree.Get(entry{Header: tar.Header{Name: filepath.Join(dir, filepath.Base(name))}})
+	e := fsys.tree.Get(entry{Header: tar.Header{Name: name}})
 	if e == nil {
 		return nil, fs.ErrNotExist
 	}
 
 	// Use the original name (before it was resolved) for the entry.
 	renamedEntry := e.(entry)
-	renamedEntry.Name = filepath.Base(name)
+	renamedEntry.Name = originalName
 
 	return fsys.statEntry(renamedEntry)
 }
@@ -252,35 +244,31 @@ func (fsys *FS) statEntry(e entry) (fs.FileInfo, error) {
 	return e.FileInfo(), nil
 }
 
-func (fsys *FS) resolvePath(path string) (string, error) {
-	if path == "." {
-		return ".", nil
+func (fsys *FS) resolve(name string, noResolveLastComponent bool) (string, error) {
+	var currentPath string
+
+	name = sanitizePath(name)
+	if name == "" {
+		return "", nil
 	}
 
-	visitedPaths := make(map[string]bool)
-	var currentPath string
-	for _, comp := range splitPath(sanitizePath(path)) {
+	components := strings.Split(name, "/")
+	for i, comp := range components {
 		currentPath = filepath.Join(currentPath, comp)
-
-		// Check if the current path has already been visited
-		if visitedPaths[currentPath] {
-			return "", fmt.Errorf("symlink cycle detected at path: %s", currentPath)
-		}
-		visitedPaths[currentPath] = true
 
 		e := fsys.tree.Get(entry{Header: tar.Header{Name: currentPath}})
 		if e == nil {
 			return "", fs.ErrNotExist
 		}
 
-		if e.(entry).Typeflag == tar.TypeSymlink {
-			linkname := e.(entry).Linkname
-			if !filepath.IsAbs(linkname) {
-				linkname = filepath.Join(filepath.Dir(currentPath), linkname)
+		if e.(entry).Typeflag == tar.TypeSymlink && !(noResolveLastComponent && i == len(components)-1) {
+			target := e.(entry).Linkname
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(currentPath), target)
 			}
 
 			var err error
-			currentPath, err = fsys.resolvePath(linkname)
+			currentPath, err = fsys.resolve(sanitizePath(target), false)
 			if err != nil {
 				return "", err
 			}
@@ -291,17 +279,7 @@ func (fsys *FS) resolvePath(path string) (string, error) {
 }
 
 func sanitizePath(name string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(filepath.Clean(strings.TrimSpace(name)), "/"), "./")
-}
-
-func splitPath(path string) []string {
-	var components []string
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part != "" {
-			components = append(components, part)
-		}
-	}
-	return components
+	return strings.TrimPrefix(strings.TrimPrefix(filepath.Clean(filepath.ToSlash(strings.TrimSpace(name))), "."), "/")
 }
 
 type file struct {
