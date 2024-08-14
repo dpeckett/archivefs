@@ -32,6 +32,7 @@
 package arfs
 
 import (
+	"archive/tar"
 	"errors"
 	"fmt"
 	"io"
@@ -87,6 +88,10 @@ func Open(ra io.ReaderAt) (*FS, error) {
 			return nil, err
 		}
 
+		if strings.Contains(e.Filename, "/") {
+			return nil, fmt.Errorf("invalid filename: %s", e.Filename)
+		}
+
 		begin := offset + int64(n)
 		e.data = func() io.Reader {
 			return io.NewSectionReader(ra, begin, e.FileSize)
@@ -113,13 +118,14 @@ func (fsys *FS) Open(name string) (fs.File, error) {
 
 // ReadDir reads the contents of the archive.
 func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
-	dir := sanitizePath(name)
+	name = sanitizePath(name)
+	if name != "" {
+		return nil, errors.New("ar does not support directories")
+	}
 
 	var dirEntries []fs.DirEntry
-	for path, dirent := range fsys.entries {
-		if sanitizePath(filepath.Dir(path)) == dir {
-			dirEntries = append(dirEntries, dirent)
-		}
+	for _, dirent := range fsys.entries {
+		dirEntries = append(dirEntries, dirent)
 	}
 
 	return dirEntries, nil
@@ -160,9 +166,12 @@ func parseArEntry(line []byte) (*Entry, error) {
 		return nil, fmt.Errorf("failed to parse file mode: %w", err)
 	}
 
+	// The tar package has a handy conversion function for the unix file mode bits.
+	fileMode := (&tar.Header{Mode: int64(mode)}).FileInfo().Mode()
+
 	e := Entry{
 		Filename: sanitizePath(string(line[0:16])),
-		FileMode: fs.FileMode(mode),
+		FileMode: fileMode,
 	}
 
 	for target, value := range map[*int64][]byte{

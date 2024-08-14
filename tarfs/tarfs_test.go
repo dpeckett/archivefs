@@ -52,8 +52,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dpeckett/archivefs/internal/testutil"
 	"github.com/dpeckett/archivefs/tarfs"
-	"github.com/rogpeppe/go-internal/dirhash"
 	"github.com/stretchr/testify/require"
 )
 
@@ -456,24 +456,7 @@ func TestTarFSDirHash(t *testing.T) {
 	fsys, err := tarfs.Open(f)
 	require.NoError(t, err)
 
-	var files []string
-	err = fs.WalkDir(fsys, ".", func(file string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-
-		files = append(files, filepath.ToSlash(file))
-		return nil
-	})
-	require.NoError(t, err)
-
-	h, err := dirhash.Hash1(files, func(name string) (io.ReadCloser, error) {
-		return fsys.Open(name)
-	})
+	h, err := testutil.HashFS(fsys)
 	require.NoError(t, err)
 
 	require.Equal(t, "h1:adgxkqVceeKMyJdMZMvcUIbg94TthnXUmOeufCPuzQI=", h)
@@ -555,4 +538,33 @@ func TestTarFSResolveSymlink(t *testing.T) {
 
 		require.Len(t, entries, 208)
 	})
+}
+
+func TestTarFSCreate(t *testing.T) {
+	tempDir := t.TempDir()
+
+	dstFile, err := os.OpenFile(filepath.Join(tempDir, "archive.tar"), os.O_CREATE|os.O_RDWR, 0o644)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, dstFile.Close())
+	})
+
+	srcFile, err := os.Open("testdata/toybox.tar")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, srcFile.Close())
+	})
+
+	srcFS, err := tarfs.Open(srcFile)
+	require.NoError(t, err)
+
+	require.NoError(t, tarfs.Create(dstFile, srcFS))
+
+	dstFS, err := tarfs.Open(dstFile)
+	require.NoError(t, err)
+
+	h, err := testutil.HashFS(dstFS)
+	require.NoError(t, err)
+
+	require.Equal(t, "h1:adgxkqVceeKMyJdMZMvcUIbg94TthnXUmOeufCPuzQI=", h)
 }

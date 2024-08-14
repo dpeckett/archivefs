@@ -10,12 +10,15 @@
 package arfs_test
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/dpeckett/archivefs/arfs"
+	"github.com/dpeckett/archivefs/internal/testutil"
 
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +26,9 @@ import (
 func TestArFS(t *testing.T) {
 	f, err := os.Open("testdata/multi_archive.a")
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, f.Close())
+	})
 
 	fsys, err := arfs.Open(f)
 	require.NoError(t, err)
@@ -35,7 +41,7 @@ func TestArFS(t *testing.T) {
 	require.Equal(t, int64(1361157466), fi.ModTime().Unix())
 	require.Equal(t, int64(501), fi.Sys().(*arfs.Entry).Uid)
 	require.Equal(t, int64(20), fi.Sys().(*arfs.Entry).Gid)
-	require.Equal(t, fs.FileMode(33188), fi.Mode())
+	require.Equal(t, fs.FileMode(0o644), fi.Mode())
 
 	// Now, test that we can read the contents of the file.
 	arFile, err := fsys.Open("hello.txt")
@@ -63,4 +69,51 @@ func TestArFS(t *testing.T) {
 
 	require.Equal(t, "hello.txt", dir[0].Name())
 	require.Equal(t, "lamp.txt", dir[1].Name())
+}
+
+func TestArFSDirHash(t *testing.T) {
+	srcFile, err := os.Open("testdata/multi_archive.a")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, srcFile.Close())
+	})
+
+	srcFS, err := arfs.Open(srcFile)
+	require.NoError(t, err)
+
+	h, err := testutil.HashFS(srcFS)
+	require.NoError(t, err)
+
+	require.Equal(t, "h1:dTg4rf4sgf9d5r3dq6QekgeMcuDikVhqVELvfFkedDU=", h)
+}
+
+func TestArFSCreate(t *testing.T) {
+	tempDir := t.TempDir()
+
+	srcFile, err := os.Open("testdata/multi_archive.a")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, srcFile.Close())
+	})
+
+	srcFS, err := arfs.Open(srcFile)
+	require.NoError(t, err)
+
+	dstFile, err := os.OpenFile(filepath.Join(tempDir, "multi_archive.a"), os.O_CREATE|os.O_RDWR, 0o644)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, dstFile.Close())
+	})
+
+	fmt.Println("dstFile:", dstFile.Name())
+
+	require.NoError(t, arfs.Create(dstFile, srcFS))
+
+	dstFS, err := arfs.Open(dstFile)
+	require.NoError(t, err)
+
+	h, err := testutil.HashFS(dstFS)
+	require.NoError(t, err)
+
+	require.Equal(t, "h1:dTg4rf4sgf9d5r3dq6QekgeMcuDikVhqVELvfFkedDU=", h)
 }

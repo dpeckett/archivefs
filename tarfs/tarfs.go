@@ -18,12 +18,15 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/dpeckett/archivefs"
 )
 
 var (
-	_ fs.FS        = (*FS)(nil)
-	_ fs.ReadDirFS = (*FS)(nil)
-	_ fs.StatFS    = (*FS)(nil)
+	_ fs.FS                = (*FS)(nil)
+	_ fs.ReadDirFS         = (*FS)(nil)
+	_ fs.StatFS            = (*FS)(nil)
+	_ archivefs.ReadLinkFS = (*FS)(nil)
 )
 
 type FS struct {
@@ -67,11 +70,18 @@ func Open(ra io.ReaderAt) (*FS, error) {
 
 		h.Name = sanitizePath(h.Name)
 
-		// Make archive relative paths absolute.
-		if strings.HasPrefix(h.Linkname, "./") {
-			h.Linkname = strings.TrimPrefix(h.Linkname, ".")
+		// there might be a junk root entry.
+		if h.Name == "" {
+			continue
 		}
-		h.Linkname = filepath.Clean(h.Linkname)
+
+		// Make archive relative paths absolute.
+		if h.Typeflag == tar.TypeSymlink {
+			if strings.HasPrefix(h.Linkname, "./") {
+				h.Linkname = strings.TrimPrefix(h.Linkname, ".")
+			}
+			h.Linkname = filepath.Clean(h.Linkname)
+		}
 
 		// Create a default directory entry for each parent directory.
 		for dir := filepath.Dir(h.Name); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
