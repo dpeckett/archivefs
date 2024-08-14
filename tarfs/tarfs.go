@@ -57,13 +57,10 @@ func Open(ra io.ReaderAt) (*FS, error) {
 			if _, err := io.Copy(io.Discard, tr); err != nil {
 				return nil, fmt.Errorf("failed to read file %s: %w", h.Name, err)
 			}
-		case tar.TypeDir, tar.TypeSymlink:
+		case tar.TypeDir, tar.TypeLink, tar.TypeSymlink:
 			// NOP
 		case tar.TypeXGlobalHeader:
 			continue // Ignore metadata-only entries.
-		case tar.TypeLink:
-			// We don't support hard links, so replace them with symlinks.
-			h.Typeflag = tar.TypeSymlink
 		default:
 			return nil, fmt.Errorf("unsupported file type: %s, %c", h.Name, h.Typeflag)
 		}
@@ -103,6 +100,21 @@ func Open(ra io.ReaderAt) (*FS, error) {
 			data: func() io.Reader {
 				return io.NewSectionReader(ra, begin, size)
 			},
+		}
+	}
+
+	// Point hardlinks to the underlying dirent.
+	for path, d := range dirents {
+		if d.Typeflag == tar.TypeLink {
+			name := sanitizePath(d.Linkname)
+			target, ok := dirents[name]
+			if !ok {
+				return nil, fmt.Errorf("failed to resolve hardlink %q: %w", name, fs.ErrNotExist)
+			}
+
+			targetCopy := *target
+			targetCopy.Header.Name = path
+			dirents[path] = &targetCopy
 		}
 	}
 
