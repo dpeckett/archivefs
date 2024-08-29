@@ -38,6 +38,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -127,6 +128,10 @@ func (fsys *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	for _, dirent := range fsys.entries {
 		dirEntries = append(dirEntries, dirent)
 	}
+
+	slices.SortFunc(dirEntries, func(a, b fs.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
 
 	return dirEntries, nil
 }
