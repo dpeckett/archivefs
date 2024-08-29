@@ -66,10 +66,15 @@ func Create(dst io.Writer, src fs.FS) error {
 }
 
 func writeArHeader(w io.Writer, hdr *tar.Header) error {
+	name := sanitizePath(hdr.Name)
+	if len(name) > 16 {
+		return fmt.Errorf("file name too long: %s", name)
+	}
+
 	// Construct the ar(1) header
 	arHeader := fmt.Sprintf(
 		"%-16s%-12s%-6s%-6s%-8s%-10s`\n",
-		sanitizePath(hdr.Name),
+		name,
 		strconv.Itoa(int(hdr.ModTime.Unix())),
 		strconv.Itoa(hdr.Uid),
 		strconv.Itoa(hdr.Gid),

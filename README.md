@@ -6,6 +6,7 @@ various archive types.
 ## Supported Archive Types
 
 - [ar](https://en.wikipedia.org/wiki/Ar_(Unix))
+- [erofs](https://en.wikipedia.org/wiki/EROFS)
 - [tar](https://en.wikipedia.org/wiki/Tar_(computing))
 
 ## Usage
