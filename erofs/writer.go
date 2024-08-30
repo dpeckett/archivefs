@@ -33,7 +33,7 @@ const (
 
 // Create creates an EROFS filesystem image from the source filesystem and writes
 // it to the destination writer.
-func Create(src fs.FS, dst io.WriterAt) error {
+func Create(dst io.WriterAt, src fs.FS) error {
 	w := &writer{
 		src: src,
 		dst: dst,

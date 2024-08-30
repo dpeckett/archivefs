@@ -251,7 +251,7 @@ func TestEROFSCreate(t *testing.T) {
 		require.NoError(t, dstFile.Close())
 	})
 
-	require.NoError(t, erofs.Create(srcFS, dstFile))
+	require.NoError(t, erofs.Create(dstFile, srcFS))
 
 	dstFS, err := erofs.Open(dstFile)
 	require.NoError(t, err)
