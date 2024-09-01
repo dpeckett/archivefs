@@ -39,7 +39,6 @@ import (
 	"hash/crc32"
 	"io"
 	"io/fs"
-	"syscall"
 )
 
 const (
@@ -301,7 +300,7 @@ func (sb *SuperBlock) checksum() error {
 // image.
 func (i *Image) inodeFormatAt(off int64) (uint16, error) {
 	if !checkInodeAlignment(off) {
-		return 0, syscall.EFAULT
+		return 0, fmt.Errorf("invalid inode alignment at offset %d", off)
 	}
 	buf, err := i.bytesAt(off, 2)
 	if err != nil {
@@ -314,7 +313,7 @@ func (i *Image) inodeFormatAt(off int64) (uint16, error) {
 // the image.
 func (i *Image) inodeCompactAt(off int64) (*InodeCompact, error) {
 	if !checkInodeAlignment(off) {
-		return nil, syscall.EFAULT
+		return nil, fmt.Errorf("invalid inode alignment at offset %d", off)
 	}
 	var inode InodeCompact
 	if err := i.unmarshalFrom(int64(off), &inode); err != nil {
@@ -328,7 +327,7 @@ func (i *Image) inodeCompactAt(off int64) (*InodeCompact, error) {
 // the image.
 func (i *Image) inodeExtendedAt(off int64) (*InodeExtended, error) {
 	if !checkInodeAlignment(off) {
-		return nil, syscall.EFAULT
+		return nil, fmt.Errorf("invalid inode alignment at offset %d", off)
 	}
 
 	var inode InodeExtended
@@ -342,7 +341,7 @@ func (i *Image) inodeExtendedAt(off int64) (*InodeExtended, error) {
 func (i *Image) direntAt(off int64) (*Dirent, error) {
 	// Each valid dirent should be aligned to 4 bytes.
 	if off&3 != 0 {
-		return nil, syscall.EFAULT
+		return nil, fmt.Errorf("invalid dirent alignment at offset %d", off)
 	}
 
 	var dirent Dirent
@@ -380,7 +379,7 @@ func (i *Image) Inode(nid uint64) (Inode, error) {
 		}
 
 		if ino.XattrCount != 0 {
-			return Inode{}, fmt.Errorf("unsupported xattr at inode %d: %w", nid, syscall.ENOTSUP)
+			return Inode{}, fmt.Errorf("unsupported xattr at inode %d", nid)
 		}
 
 		rawBlockAddr = ino.RawBlockAddr
@@ -401,7 +400,7 @@ func (i *Image) Inode(nid uint64) (Inode, error) {
 		}
 
 		if ino.XattrCount != 0 {
-			return Inode{}, fmt.Errorf("unsupported xattr at inode %d: %w", nid, syscall.ENOTSUP)
+			return Inode{}, fmt.Errorf("unsupported xattr at inode %d", nid)
 		}
 
 		rawBlockAddr = ino.RawBlockAddr
@@ -416,7 +415,7 @@ func (i *Image) Inode(nid uint64) (Inode, error) {
 		inode.mtimeNsec = ino.MtimeNsec
 
 	default:
-		return Inode{}, fmt.Errorf("unsupported layout at inode %d: %w", nid, syscall.ENOTSUP)
+		return Inode{}, fmt.Errorf("unsupported layout at inode %d", nid)
 	}
 
 	blockSize := int64(i.BlockSize())
@@ -428,8 +427,8 @@ func (i *Image) Inode(nid uint64) (Inode, error) {
 		// the remaining room of the metadata block.
 		tailSize := int64(inode.size) & (blockSize - 1)
 		if tailSize == 0 || tailSize > blockSize-inodeSize {
-			return Inode{}, fmt.Errorf("inline data not found or cross block boundary at inode %d, tail size: %d: %w",
-				nid, tailSize, syscall.EUCLEAN)
+			return Inode{}, fmt.Errorf("inline data not found or cross block boundary at inode %d, tail size: %d",
+				nid, tailSize)
 		}
 		inode.idataOff = off + inodeSize
 		fallthrough
@@ -438,7 +437,7 @@ func (i *Image) Inode(nid uint64) (Inode, error) {
 		inode.dataOff = i.sb.BlockAddrToOffset(rawBlockAddr)
 
 	default:
-		return Inode{}, fmt.Errorf("unsupported data layout at inode %d: %w", nid, syscall.ENOTSUP)
+		return Inode{}, fmt.Errorf("unsupported data layout at inode %d", nid)
 	}
 
 	return inode, nil
@@ -628,7 +627,7 @@ func (ino *Inode) Data() (io.Reader, error) {
 		return io.MultiReader(readers...), nil
 
 	default:
-		return nil, fmt.Errorf("unsupported data layout: %w", syscall.ENOTSUP)
+		return nil, errors.New("unsupported data layout")
 	}
 }
 
@@ -700,7 +699,7 @@ func (ino *Inode) getDirentName(d *Dirent, direntOff int64, block blockData, las
 		nameLen = uint32(next.NameOff - d.NameOff)
 	}
 	if uint32(d.NameOff)+nameLen > block.size || nameLen > MaxNameLen || nameLen == 0 {
-		return nil, fmt.Errorf("corrupted dirent: %w", syscall.EUCLEAN)
+		return nil, errors.New("corrupted dirent")
 	}
 	name, err := ino.image.bytesAt(int64(block.base)+int64(d.NameOff), int64(nameLen))
 	if err != nil {
@@ -710,7 +709,7 @@ func (ino *Inode) getDirentName(d *Dirent, direntOff int64, block blockData, las
 		// Optional padding may exist at the end of a block.
 		n := bytes.IndexByte(name, 0)
 		if n == 0 {
-			return nil, fmt.Errorf("corrupted dirent: %w", syscall.EUCLEAN)
+			return nil, errors.New("corrupted dirent")
 		}
 		if n != -1 {
 			name = name[:n]
@@ -726,7 +725,7 @@ func (ino *Inode) getDirent0(block blockData) (*Dirent, error) {
 		return nil, err
 	}
 	if d0.NameOff < uint16(DirentSize) || uint32(d0.NameOff) >= block.size {
-		return nil, fmt.Errorf("invalid nameOff0 %d at inode %d: %w", d0.NameOff, ino.Nid(), syscall.EUCLEAN)
+		return nil, fmt.Errorf("invalid nameOff0 %d at inode %d", d0.NameOff, ino.Nid())
 	}
 	return d0, nil
 }
@@ -734,7 +733,7 @@ func (ino *Inode) getDirent0(block blockData) (*Dirent, error) {
 // Lookup looks up a child by the name.
 func (ino *Inode) Lookup(name string) (Dirent, error) {
 	if !ino.IsDir() {
-		return Dirent{}, syscall.ENOTDIR
+		return Dirent{}, fs.ErrInvalid
 	}
 
 	// Currently (Go 1.21), there is no safe and efficient way to do three-way
@@ -781,7 +780,7 @@ func (ino *Inode) Lookup(name string) (Dirent, error) {
 
 	if targetBlock.base == 0 {
 		// The target block was not found.
-		return Dirent{}, syscall.ENOENT
+		return Dirent{}, fs.ErrNotExist
 	}
 
 	// Find the target dirent in the target block. Note that, as the 0th dirent
@@ -814,14 +813,14 @@ func (ino *Inode) Lookup(name string) (Dirent, error) {
 		}
 	}
 
-	return Dirent{}, syscall.ENOENT
+	return Dirent{}, fs.ErrNotExist
 }
 
 // IterDirents invokes cb on each entry in the directory represented by this inode.
 // The directory entries will be iterated in alphabetical order.
 func (ino *Inode) IterDirents(cb func(name string, typ uint8, nid uint64) error) error {
 	if !ino.IsDir() {
-		return syscall.ENOTDIR
+		return fs.ErrInvalid
 	}
 
 	// Iterate all the blocks which contain dirents.
@@ -859,14 +858,14 @@ func (ino *Inode) IterDirents(cb func(name string, typ uint8, nid uint64) error)
 // Readlink reads the link target.
 func (ino *Inode) Readlink() (string, error) {
 	if !ino.IsSymlink() {
-		return "", syscall.EINVAL
+		return "", fs.ErrInvalid
 	}
 	off := int64(ino.dataOff)
 	size := int64(ino.size)
 	if ino.idataOff != 0 {
 		// Inline symlink data shouldn't cross block boundary.
 		if ino.blocks > 1 {
-			return "", fmt.Errorf("inline data cross block boundary: %w", syscall.EUCLEAN)
+			return "", fmt.Errorf("inline data cross block boundary at inode %d", ino.Nid())
 		}
 		off = int64(ino.idataOff)
 	} else {
