@@ -10,7 +10,6 @@
 package erofs
 
 import (
-	"archive/tar"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -397,20 +395,7 @@ func (w *writer) dataForInode(path string, ino any) (io.ReadCloser, int64, error
 }
 
 func toInode(fi fs.FileInfo, nlink int) any {
-	var uid, gid int
-	switch fi.Sys().(type) {
-	case *syscall.Stat_t:
-		stat := fi.Sys().(*syscall.Stat_t)
-
-		uid = int(stat.Uid)
-		gid = int(stat.Gid)
-
-	case *tar.Header:
-		hdr := fi.Sys().(*tar.Header)
-
-		uid = hdr.Uid
-		gid = hdr.Gid
-	}
+	uid, gid := getOwner(fi)
 
 	// Can we use a compact inode?
 	compact := fi.Size() <= math.MaxUint32 &&
