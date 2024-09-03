@@ -17,6 +17,12 @@ Copyright:
 License: Apache-2.0
 
 Files:
+ memfs/memfs.go
+ memfs/memfs_test.go
+Copyright: Copyright (c) 2021 The memfs Authors. All rights reserved.
+License: BSD-3-Clause
+
+Files:
  tarfs/tarfs_test.go
 Copyright:
  Copyright (c) 2009 The Go Authors. All rights reserved.
