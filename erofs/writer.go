@@ -171,12 +171,12 @@ func (w *writer) firstPass() (metaSize, dataSize int64, err error) {
 
 		switch ino := ino.(type) {
 		case InodeCompact:
-			if ino.RawBlockAddr > 0 {
+			if !isInlined(ino) {
 				ino.RawBlockAddr += uint32(dataBlockAddr)
 				w.inodes[path] = ino
 			}
 		case InodeExtended:
-			if ino.RawBlockAddr > 0 {
+			if !isInlined(ino) {
 				ino.RawBlockAddr += uint32(dataBlockAddr)
 				w.inodes[path] = ino
 			}
